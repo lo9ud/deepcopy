@@ -23,14 +23,6 @@ impl CopyJob {
         }
     }
 
-    pub fn source(&self) -> &PathBuf {
-        &self.source
-    }
-
-    pub fn destination(&self) -> &PathBuf {
-        &self.destination
-    }
-
     pub fn _execute(
         &self,
         conflict: ConflictResolutionStrategy,
@@ -122,10 +114,6 @@ impl JobQueue {
                 let job = CopyJob::new(source.into(), destination.into());
                 self.push(job).expect("Failed to push job");
             });
-    }
-
-    pub fn get_sender(&self) -> Sender<CopyJob> {
-        self.sender.clone()
     }
 
     fn push(&mut self, job: CopyJob) -> Result<(), std::sync::mpsc::SendError<CopyJob>> {

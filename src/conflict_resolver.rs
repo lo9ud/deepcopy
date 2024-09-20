@@ -10,7 +10,7 @@ pub enum ConflictResolutionStrategy {
 
 impl Default for ConflictResolutionStrategy {
     fn default() -> Self {
-        Self::overwrite()
+        Self::Overwrite
     }
 }
 
@@ -20,15 +20,7 @@ pub enum ConflictResolution {
 }
 
 impl ConflictResolutionStrategy {
-    pub fn overwrite() -> Self {
-        Self::Overwrite
-    }
-
-    pub fn skip() -> Self {
-        Self::Skip
-    }
-
-    pub fn resolve(&self, target:PathBuf) -> ConflictResolution {
+    pub fn resolve(&self, _target:PathBuf) -> ConflictResolution {
         match self {
             Self::Overwrite => ConflictResolution::Overwrite,
             Self::Skip => ConflictResolution::Skip,

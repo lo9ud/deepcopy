@@ -67,8 +67,6 @@ struct Stats {
     bytes: u64,
     bytes_skipped: u64,
     bytes_overwritten: u64,
-
-    warnings: u64,
 }
 
 impl Stats {
@@ -81,8 +79,6 @@ impl Stats {
             bytes: 0,
             bytes_skipped: 0,
             bytes_overwritten: 0,
-
-            warnings: 0,
         }
     }
 }

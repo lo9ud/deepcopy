@@ -17,8 +17,3 @@ pub struct Cli {
     #[arg(short = 'c', long = "conflict", default_value = "skip")]
     pub conflict_resolution_strategy: ConflictResolutionStrategy,
 }
-
-fn main() {
-    let args = Cli::parse();
-    println!("{:?}", args);
-}
