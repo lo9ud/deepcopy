@@ -1,12 +1,10 @@
 use core::time;
 use std::{
-    fs::exists,
     path::PathBuf,
     sync::{
         mpsc::{channel, Receiver, Sender},
         Arc, Mutex,
     },
-    thread,
 };
 
 use crate::{conflict_resolver::ConflictResolutionStrategy, ProgressHolder, Stats};

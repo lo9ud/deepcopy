@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use clap::ValueEnum;
-use dialoguer::Confirm;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ConflictResolutionStrategy {

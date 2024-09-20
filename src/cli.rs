@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::{builder::PathBufValueParser, parser, Parser, ValueEnum, ValueHint};
+use clap::{Parser, ValueHint};
 
 use crate::conflict_resolver::ConflictResolutionStrategy;
 
