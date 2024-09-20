@@ -3,7 +3,7 @@ name = "deepcopy"
 version = "0.1.0"
 edition = "2021"
 authors = ["lo9ud"]
-repository = "github.com/lo9ud/deepcopy"
+repository = "https://github.com/lo9ud/deepcopy"
 description = "A simple tool to copy files and directories recursively, and report current progress."
 license = "MIT"
 
