@@ -1,6 +1,6 @@
 [package]
 name = "deepcopy"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["lo9ud"]
 repository = "https://github.com/lo9ud/deepcopy"
