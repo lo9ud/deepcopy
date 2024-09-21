@@ -1,10 +1,9 @@
 use core::time;
 use std::{
-    path::PathBuf,
-    sync::{
+    path::PathBuf, sync::{
         mpsc::{channel, Receiver, Sender},
         Arc, Mutex,
-    },
+    }
 };
 
 use crate::{conflict_resolver::ConflictResolutionStrategy, ProgressHolder, Stats};
@@ -12,14 +11,14 @@ use crate::{conflict_resolver::ConflictResolutionStrategy, ProgressHolder, Stats
 #[derive(Debug, Clone)]
 pub struct CopyJob {
     source: PathBuf,
-    destination: PathBuf,
+    target: PathBuf,
 }
 
 impl CopyJob {
     pub fn new(source: PathBuf, destination: PathBuf) -> Self {
         Self {
             source,
-            destination,
+            target: destination,
         }
     }
 
@@ -28,6 +27,7 @@ impl CopyJob {
         conflict: ConflictResolutionStrategy,
         mpb: Arc<ProgressHolder>,
         stats: Arc<Mutex<Stats>>,
+        dry_run:bool,
     ) {
         let file_bytes = std::fs::metadata(&self.source)
             .expect(&format!(
@@ -36,27 +36,41 @@ impl CopyJob {
             ))
             .len();
 
-        let pb = mpb.add(file_bytes, format!("{}", self.source.display()));
+        let to_from = self.source.components().into_iter()
+        .rev().zip(self.target.components()
+        .into_iter()
+        .rev())
+        .collect::<Vec<_>>();
+            
+        let (to, _) = to_from.iter()
+        .take_while(|(to, from)| to == from)
+        .cloned()
+        .collect::<Vec<_>>()
+        .iter().rev().cloned()
+        .unzip::<_, _, PathBuf, PathBuf>();
+        
+
+        let pb = mpb.add(file_bytes, format!("{}{}", if dry_run {"DRY RUN: "} else {""}, to.display()));
 
         if !self
-            .destination
+            .target
             .parent()
             .expect("Failed to get parent")
             .exists()
         {
             std::fs::create_dir_all(
                 &self
-                    .destination
+                    .target
                     .parent()
                     .expect("Failed to create directory"),
             )
             .expect("Failed to create directory");
         }
 
-        if self.destination.exists() {
-            match conflict.resolve(self.destination.clone()) {
+        if self.target.exists() {
+            match conflict.resolve(self.target.clone()) {
                 crate::conflict_resolver::ConflictResolution::Overwrite => {
-                    std::fs::copy(&self.source, &self.destination).expect("Failed to copy file");
+                    std::fs::copy(&self.source, &self.target).expect("Failed to copy file");
                     stats.lock().unwrap().files_overwritten += 1;
                     stats.lock().unwrap().bytes_overwritten += file_bytes;
                 }
@@ -66,7 +80,11 @@ impl CopyJob {
                 }
             }
         } else {
-            std::fs::copy(&self.source, &self.destination).expect("Failed to copy file");
+            if !dry_run {
+                std::fs::copy(&self.source, &self.target).expect("Failed to copy file");
+            } else {
+                std::thread::sleep(time::Duration::from_secs(3));
+            }
             stats.lock().unwrap().files += 1;
             stats.lock().unwrap().bytes += file_bytes;
         }

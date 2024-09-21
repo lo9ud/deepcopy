@@ -14,11 +14,12 @@ struct ProgressHolder {
 
 impl ProgressHolder {
     fn new(n_jobs: u64) -> Self {
-        let pb = indicatif::ProgressBar::new(n_jobs);
+        let pb = indicatif::ProgressBar::with_draw_target(Some(n_jobs), ProgressDrawTarget::stdout());
         pb.set_style(
             ProgressStyle::default_bar()
+                .progress_chars("█▓▒░ ")
                 .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("{spinner:.green} [{elapsed_precise}] {bar:40.blue/green} ({pos}/{len}) {wide_msg}")
+                .template("{spinner:.green} [{elapsed_precise}]▕{bar:85.blue/green}▏{pos}/{len} files {wide_msg}")
                 .expect("Failed to set style"),
         );
         pb.enable_steady_tick(std::time::Duration::from_millis(150));
@@ -37,12 +38,12 @@ impl ProgressHolder {
             .unwrap()
             .add(ProgressBar::with_draw_target(
                 Some(len),
-                ProgressDrawTarget::stderr(),
+                ProgressDrawTarget::stdout(),
             ));
         pb.set_style(
             ProgressStyle::default_bar()
                 .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("  ↪ {spinner:.green} [{elapsed_precise}] ({total_bytes:>10}) {wide_msg}")
+                .template("↪ {spinner:.green} [{elapsed_precise}] ({total_bytes:>10}) {wide_msg}")
                 .expect("Failed to set style"),
         );
         pb.set_message(name);
@@ -89,15 +90,13 @@ fn main() {
     job_queue.populate();
     let pool = ThreadPool::new(4);
 
-    println!("Copying files...");
-
     let main_progress = Arc::new(ProgressHolder::new(job_queue.jobs as u64));
     let stats = Arc::new(Mutex::new(Stats::new()));
     for job in job_queue {
         let main_progress = main_progress.clone();
         let stats = stats.clone();
         pool.execute(move || {
-            job._execute(args.conflict_resolution_strategy, main_progress, stats);
+            job._execute(args.conflict_resolution_strategy, main_progress, stats, args.dry_run);
         });
     }
     pool.join();
