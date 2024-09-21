@@ -2,15 +2,13 @@
 name = "deepcopy"
 version = "0.1.1"
 edition = "2021"
-authors = ["lo9ud"]
+authors = ["Adam Kent<adam.dkent@icloud.com>"]
 repository = "https://github.com/lo9ud/deepcopy"
 description = "A simple tool to copy files and directories recursively, and report current progress."
 license = "MIT"
 
 [dependencies]
 clap = { version = "4.5.17", features = ["derive"] }
-console = "0.15.8"
-dialoguer = "0.11.0"
 indicatif = "0.17.8"
 num_cpus = "1.16.0"
 termsize = "0.1.9"

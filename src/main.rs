@@ -87,8 +87,18 @@ impl Stats {
 fn main() {
     let args = cli::Cli::parse();
     let mut job_queue = copy_queue::JobQueue::new(args.source, args.dest);
+    let pb = ProgressBar::new(1).with_message("Scanning files...");
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+            .template("{spinner:.green} [{elapsed_precise}] {msg}")
+            .expect("Failed to set style"),
+    );
+    pb.enable_steady_tick(std::time::Duration::from_millis(150));
     job_queue.populate();
-    let pool = ThreadPool::new(4);
+    pb.finish_with_message("Done scanning files");
+
+    let pool = ThreadPool::new(num_cpus::get() * 4);
 
     let main_progress = Arc::new(ProgressHolder::new(job_queue.jobs as u64));
     let stats = Arc::new(Mutex::new(Stats::new()));
