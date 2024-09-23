@@ -68,7 +68,7 @@ impl CopyJob {
         }
 
         if self.target.exists() {
-            match conflict.resolve(self.target.clone()) {
+            match conflict.resolve(self.source.clone(), self.target.clone()) {
                 crate::conflict_resolver::ConflictResolution::Overwrite => {
                     std::fs::copy(&self.source, &self.target).expect("Failed to copy file");
                     stats.lock().unwrap().files_overwritten += 1;
