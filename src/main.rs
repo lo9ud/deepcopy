@@ -17,9 +17,9 @@ impl ProgressHolder {
         let pb = indicatif::ProgressBar::with_draw_target(Some(n_jobs), ProgressDrawTarget::stdout());
         pb.set_style(
             ProgressStyle::default_bar()
-                .progress_chars("█▓▒░ ")
+                .progress_chars(&['█','▉','▊','▋','▌','▍','▎','▏',' '].iter().collect::<String>())
                 .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("{spinner:.green} [{elapsed_precise}]▕{bar:85.blue/green}▏{pos}/{len} files {wide_msg}")
+                .template("{spinner:.green} [{elapsed_precise}]▕{bar:85.blue/green}▏{pos}/{len} files ({percent}%) - {eta} remaining")
                 .expect("Failed to set style"),
         );
         pb.enable_steady_tick(std::time::Duration::from_millis(150));
@@ -43,7 +43,7 @@ impl ProgressHolder {
         pb.set_style(
             ProgressStyle::default_bar()
                 .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("↪ {spinner:.green} [{elapsed_precise}] ({total_bytes:>10}) {wide_msg}")
+                .template("↪ {spinner:.green} [{elapsed_precise}] ┃ {total_bytes:>10} ┃ {wide_msg}")
                 .expect("Failed to set style"),
         );
         pb.set_message(name);
@@ -96,7 +96,7 @@ fn main() {
     );
     pb.enable_steady_tick(std::time::Duration::from_millis(150));
     job_queue.populate();
-    pb.finish_with_message("Done scanning files");
+    pb.finish_with_message("Scan complete");
 
     let pool = ThreadPool::new(num_cpus::get() * 4);
 
@@ -109,8 +109,11 @@ fn main() {
             job._execute(args.conflict_resolution_strategy, main_progress, stats, args.dry_run);
         });
     }
+    while pool.queued_count() > 0 {
+        main_progress.pb.lock().unwrap().set_message(format!("{} jobs remaining", pool.queued_count()));
+    }
     pool.join();
-    main_progress.pb.lock().unwrap().finish_and_clear();
+    main_progress.pb.lock().unwrap().finish_with_message("Copy complete");
     let stats = stats.lock().unwrap();
     println!("Done! {} files copied, {} files skipped, {} files overwritten", stats.files, stats.files_skipped, stats.files_overwritten);
 }
