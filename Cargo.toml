@@ -11,6 +11,7 @@ license = "MIT"
 clap = { version = "4.5.17", features = ["derive"] }
 indicatif = "0.17.8"
 num_cpus = "1.16.0"
+sha2 = "0.10.8"
 termsize = "0.1.9"
 threadpool = "1.8.1"
 walkdir = "2.5.0"
