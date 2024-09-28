@@ -22,6 +22,9 @@ jobs:
 
   publish:
     name: "Publish"
+    needs:
+      - test-linux
+      - test-windows
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
