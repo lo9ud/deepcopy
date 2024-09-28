@@ -6,6 +6,8 @@ use std::{
     }
 };
 
+use log::{debug, info, warn};
+
 use crate::{conflict_resolver::ConflictResolutionStrategy, ProgressHolder, Stats};
 
 #[derive(Debug, Clone)]
@@ -22,13 +24,29 @@ impl CopyJob {
         }
     }
 
-    pub fn _execute(
+    pub fn execute(
         &self,
         conflict: ConflictResolutionStrategy,
         mpb: Arc<ProgressHolder>,
         stats: Arc<Mutex<Stats>>,
         dry_run:bool,
     ) {
+        debug!("Copying {} -> {}", self.source.display(), self.target.display());
+        match self._execute(conflict, mpb, stats, dry_run) {
+            Ok(_) => {}
+            Err(e) => {
+                warn!("Failed to copy {} -> {}: {}", self.source.display(), self.target.display(), e);
+            }
+        }
+    }
+
+    fn _execute(
+        &self,
+        conflict: ConflictResolutionStrategy,
+        mpb: Arc<ProgressHolder>,
+        stats: Arc<Mutex<Stats>>,
+        dry_run:bool,
+    ) -> Result<(), std::io::Error> {
         let file_bytes = std::fs::metadata(&self.source)
             .expect(&format!(
                 "Failed to get metadata for {}",
@@ -61,16 +79,14 @@ impl CopyJob {
             std::fs::create_dir_all(
                 &self
                     .target
-                    .parent()
-                    .expect("Failed to create directory"),
-            )
-            .expect("Failed to create directory");
+                    .parent().ok_or(std::io::Error::from(std::io::ErrorKind::NotFound))?,
+            )?;
         }
 
         if self.target.exists() {
             match conflict.resolve(self.source.clone(), self.target.clone()) {
                 crate::conflict_resolver::ConflictResolution::Overwrite => {
-                    std::fs::copy(&self.source, &self.target).expect("Failed to copy file");
+                    std::fs::copy(&self.source, &self.target)?;
                     stats.lock().unwrap().files_overwritten += 1;
                     stats.lock().unwrap().bytes_overwritten += file_bytes;
                 }
@@ -81,7 +97,7 @@ impl CopyJob {
             }
         } else {
             if !dry_run {
-                std::fs::copy(&self.source, &self.target).expect("Failed to copy file");
+                std::fs::copy(&self.source, &self.target)?;
             } else {
                 std::thread::sleep(time::Duration::from_secs(3));
             }
@@ -91,6 +107,7 @@ impl CopyJob {
         pb.finish_and_clear();
         mpb.inc_main();
         mpb.remove(&pb);
+        Ok(())
     }
 }
 
@@ -114,24 +131,29 @@ impl JobQueue {
         }
     }
 
-    pub fn populate(&mut self) {
+    pub fn populate(&mut self) -> Result<(), std::io::Error>  {
+        self._populate()
+    }
+
+    fn _populate(&mut self) -> Result<(), std::io::Error> {
         walkdir::WalkDir::new(&self.source_root)
             .into_iter()
             .filter_map(|entry| entry.ok())
             .skip(1) //Skip the root directory
-            .for_each(|entry| {
+            .try_for_each(|entry| -> Result<(), std::io::Error> {
                 let source = entry.path();
                 if source.is_dir() {
-                    return;
+                    return Ok(());
                 }
                 let destination = self.target_root.join(
                     source
                         .strip_prefix(&self.source_root)
-                        .expect("Failed to strip prefix"),
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e))?
                 );
                 let job = CopyJob::new(source.into(), destination.into());
                 self.push(job).expect("Failed to push job");
-            });
+                Ok(())
+            })
     }
 
     fn push(&mut self, job: CopyJob) -> Result<(), std::sync::mpsc::SendError<CopyJob>> {

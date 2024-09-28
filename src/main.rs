@@ -2,10 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
+use logger::LOG_FILE;
 use threadpool::ThreadPool;
+use colorize::AnsiColor;
+use log::{info, warn, error};
+
 mod cli;
 mod conflict_resolver;
 mod copy_queue;
+mod logger;
 
 struct ProgressHolder {
     pb: std::sync::Arc<std::sync::Mutex<ProgressBar>>,
@@ -85,35 +90,80 @@ impl Stats {
 }
 
 fn main() {
-    let args = cli::Cli::parse();
+
+    let _logger = logger::get_logger();
+
+    info!("Initializing");
+    let args = match cli::Cli::try_parse() {
+        Ok(args) => args,
+        Err(e) => {
+            error!("Failed to parse CLI arguments: {}", e);
+            println!("Passed arguments:");
+            for arg in std::env::args() {
+                println!("\t- {:?}", arg);
+            }
+            return;
+        }
+    };
+    println!("Find log file at: {}", LOG_FILE.display());
+    
+
     let mut job_queue = copy_queue::JobQueue::new(args.source, args.dest);
     let pb = ProgressBar::new(1).with_message("Scanning files...");
+
     pb.set_style(
         ProgressStyle::default_spinner()
-            .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-            .template("{spinner:.green} [{elapsed_precise}] {msg}")
-            .expect("Failed to set style"),
+        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+        .template("{spinner:.green} [{elapsed_precise}] {msg}")
+        .expect("Failed to set style"),
     );
     pb.enable_steady_tick(std::time::Duration::from_millis(150));
-    job_queue.populate();
-    pb.finish_with_message("Scan complete");
 
+    info!("Starting scan");
+    match job_queue.populate() {
+        Ok(_) => { 
+            info!("Scan complete");
+            pb.finish_with_message("Scan complete");
+        },
+        Err(e) => {
+            error!("Failed to populate job queue: {}", e);
+            pb.abandon_with_message("Scan failed");
+            return;
+        }
+    }
+    
+
+    info!("Creating worker thread pool");
     let pool = ThreadPool::new(num_cpus::get() * 4);
+    info!("Worker thread pool created");
 
     let main_progress = Arc::new(ProgressHolder::new(job_queue.jobs as u64));
     let stats = Arc::new(Mutex::new(Stats::new()));
+
+    info!("Queueing jobs");
     for job in job_queue {
         let main_progress = main_progress.clone();
         let stats = stats.clone();
         pool.execute(move || {
-            job._execute(args.conflict_resolution_strategy, main_progress, stats, args.dry_run);
+            job.execute(args.conflict_resolution_strategy, main_progress, stats, args.dry_run);
         });
     }
-    while pool.queued_count() > 0 {
-        main_progress.pb.lock().unwrap().set_message(format!("{} jobs remaining", pool.queued_count()));
-    }
+    info!("All jobs queued");
+
+    info!("Waiting for jobs to complete");
     pool.join();
-    main_progress.pb.lock().unwrap().finish_with_message("Copy complete");
+    info!("All jobs complete");
+
     let stats = stats.lock().unwrap();
-    println!("Done! {} files copied, {} files skipped, {} files overwritten", stats.files, stats.files_skipped, stats.files_overwritten);
+    
+    if pool.panic_count() > 0 {
+        main_progress.pb.lock().unwrap().abandon_with_message("Copy failed");
+        warn!("Not all jobs completed successfully");
+        println!("Failed! {} files copied, {} files skipped, {} files overwritten", stats.files, stats.files_skipped, stats.files_overwritten);
+        println!("{}", format!("Some ({}) jobs failed to execute. Please check the logs for more information. ({})", pool.panic_count(), LOG_FILE.display()).red());
+    } else {
+        main_progress.pb.lock().unwrap().finish_with_message("Copy complete");
+        println!("Done! {} files copied, {} files skipped, {} files overwritten", stats.files, stats.files_skipped, stats.files_overwritten);
+    }
+    
 }

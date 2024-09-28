@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use clap::ValueEnum;
+use log::warn;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum ConflictResolutionStrategy {
@@ -44,24 +45,33 @@ fn sha256_digest(file: &PathBuf) -> String {
 }
 
 impl ConflictResolutionStrategy {
-    pub fn resolve(&self, _source:PathBuf, _target:PathBuf) -> ConflictResolution {
+    pub fn resolve(&self, source:PathBuf, target:PathBuf) -> ConflictResolution {
+        match self._resolve(source.clone(), target.clone()) {
+            Ok(resolution) => resolution,
+            Err(e) => {
+                warn!("Failed to resolve conflict for {} -> {}, skipping instead. Reason: {}", source.display(), target.display(), e);
+                ConflictResolution::Skip
+            }
+        }
+    }
+
+    fn _resolve(&self, source:PathBuf, target:PathBuf) -> Result<ConflictResolution, std::io::Error> {
         match self {
-            Self::Overwrite => ConflictResolution::Overwrite,
-            Self::Skip => ConflictResolution::Skip,
+            Self::Overwrite => Ok(ConflictResolution::Overwrite),
+            Self::Skip => Ok(ConflictResolution::Skip),
             Self::ChecksumOverwrite => {
                 // check len
-                if std::fs::metadata(&_source).expect("Failed to get metadata").len() != std::fs::metadata(&_target).expect("Failed to get metadata").len() {
-                    return ConflictResolution::Overwrite;
+                if std::fs::metadata(&source)?.len() != std::fs::metadata(&target)?.len() {
+                    return Ok(ConflictResolution::Overwrite)
                 }
                 // check sha256
-                if sha256_digest(&_source) == sha256_digest(&_target) {
-                    ConflictResolution::Skip
+                if sha256_digest(&source) == sha256_digest(&target) {
+                    Ok(ConflictResolution::Skip)
                 } else {
-                    ConflictResolution::Overwrite
+                    Ok(ConflictResolution::Overwrite)
                 }
             },
-
-        	}
+        }
     }
 }
 
