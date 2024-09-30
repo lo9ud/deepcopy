@@ -94,19 +94,8 @@ fn main() {
     let _logger = logger::get_logger();
 
     info!("Initializing");
-    let args = match cli::Cli::try_parse() {
-        Ok(args) => args,
-        Err(e) => {
-            error!("Failed to parse CLI arguments: {}", e);
-            println!("Passed arguments:");
-            for arg in std::env::args() {
-                println!("\t- {:?}", arg);
-            }
-            return;
-        }
-    };
+    let args = cli::Cli::parse();
     println!("Find log file at: {}", LOG_FILE.display());
-    
 
     let mut job_queue = copy_queue::JobQueue::new(args.source, args.dest);
     let pb = ProgressBar::new(1).with_message("Scanning files...");
