@@ -1,158 +1,270 @@
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use clap::Parser;
-use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
-use logger::LOG_FILE;
-use threadpool::ThreadPool;
-use colorize::AnsiColor;
-use log::{info, warn, error};
+use indicatif::HumanBytes;
+use log::{error, info};
 
 mod cli;
 mod conflict_resolver;
-mod copy_queue;
+mod fsattr;
+mod job;
 mod logger;
+mod progress;
+mod scheduler;
+mod walker;
 
-struct ProgressHolder {
-    pb: std::sync::Arc<std::sync::Mutex<ProgressBar>>,
-    multi_progress: std::sync::Arc<std::sync::Mutex<MultiProgress>>,
-}
+use conflict_resolver::{ConflictArbiter, ConflictResolutionStrategy};
+use progress::Progress;
+use scheduler::{Completion, Gate, Lanes, RunConfig, Stats};
+use walker::WalkErrors;
 
-impl ProgressHolder {
-    fn new(n_jobs: u64) -> Self {
-        let pb = indicatif::ProgressBar::with_draw_target(Some(n_jobs), ProgressDrawTarget::stdout());
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .progress_chars(&['█','▉','▊','▋','▌','▍','▎','▏',' '].iter().collect::<String>())
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("{spinner:.green} [{elapsed_precise}]▕{bar:85.blue/green}▏{pos}/{len} files ({percent}%) - {eta} remaining")
-                .expect("Failed to set style"),
-        );
-        pb.enable_steady_tick(std::time::Duration::from_millis(150));
-        let mpb = indicatif::MultiProgress::new();
-        mpb.add(pb.clone());
-        Self {
-            pb: Arc::new(Mutex::new(pb)),
-            multi_progress: Arc::new(Mutex::new(mpb)),
-        }
-    }
+/// Conflict prompts are answered one at a time, so a small queue is plenty.
+const CONFLICT_QUEUE: usize = 32;
 
-    fn add(&self, len: u64, name: String) -> ProgressBar {
-        let pb = self
-            .multi_progress
-            .lock()
-            .unwrap()
-            .add(ProgressBar::with_draw_target(
-                Some(len),
-                ProgressDrawTarget::stdout(),
-            ));
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-                .template("↪ {spinner:.green} [{elapsed_precise}] ┃ {total_bytes:>10} ┃ {wide_msg}")
-                .expect("Failed to set style"),
-        );
-        pb.set_message(name);
-        pb.enable_steady_tick(std::time::Duration::from_millis(150));
-        pb
-    }
-
-    fn remove(&self, pb: &ProgressBar) {
-        self.multi_progress.lock().unwrap().remove(pb);
-    }
-
-    fn inc_main(&self) {
-        self.pb.lock().unwrap().inc(1);
-    }
-}
-
-struct Stats {
-    files: u64,
-    files_skipped: u64,
-    files_overwritten: u64,
-
-    bytes: u64,
-    bytes_skipped: u64,
-    bytes_overwritten: u64,
-}
-
-impl Stats {
-    fn new() -> Self {
-        Self {
-            files: 0,
-            files_skipped: 0,
-            files_overwritten: 0,
-
-            bytes: 0,
-            bytes_skipped: 0,
-            bytes_overwritten: 0,
-        }
-    }
-}
-
-fn main() {
-
-    let _logger = logger::get_logger();
-
-    info!("Initializing");
+fn main() -> std::process::ExitCode {
     let args = cli::Cli::parse();
-    println!("Find log file at: {}", LOG_FILE.display());
 
-    let mut job_queue = copy_queue::JobQueue::new(args.source, args.dest);
-    let pb = ProgressBar::new(1).with_message("Scanning files...");
+    if let Err(e) = logger::init(args.debug) {
+        eprintln!("Warning: logging disabled ({e})");
+    }
 
-    pb.set_style(
-        ProgressStyle::default_spinner()
-        .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-        .template("{spinner:.green} [{elapsed_precise}] {msg}")
-        .expect("Failed to set style"),
+    if args.color_disabled() {
+        console::set_colors_enabled(false);
+        console::set_colors_enabled_stderr(false);
+    }
+
+    let (source, dest) = match args.resolve_paths() {
+        Ok(paths) => paths,
+        Err(e) => return fail(&e),
+    };
+
+    // Refuse `--conflict ask` with no terminal before anything is copied, rather than failing
+    // partway through a large run.
+    if let Err(e) = args.validate_interactive() {
+        return fail(&e);
+    }
+
+    if !source.is_dir() {
+        return fail(&format!("source is not a directory: {}", source.display()));
+    }
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => return fail(&format!("could not start the async runtime: {e}")),
+    };
+
+    let code = runtime.block_on(run(args, source, dest));
+
+    log::logger().flush();
+    code
+}
+
+async fn run(
+    args: cli::Cli,
+    source: std::path::PathBuf,
+    dest: std::path::PathBuf,
+) -> std::process::ExitCode {
+    info!(
+        "Copying {} -> {} ({})",
+        source.display(),
+        dest.display(),
+        args.jobs_summary()
     );
-    pb.enable_steady_tick(std::time::Duration::from_millis(150));
 
-    info!("Starting scan");
-    match job_queue.populate() {
-        Ok(_) => { 
-            info!("Scan complete");
-            pb.finish_with_message("Scan complete");
-        },
-        Err(e) => {
-            error!("Failed to populate job queue: {}", e);
-            pb.abandon_with_message("Scan failed");
-            return;
-        }
+    let progress = Progress::new(args.no_tty);
+    progress.println(format!("Log file: {}", logger::LOG_FILE.display()));
+    if args.dry_run {
+        progress.println("DRY RUN - no files will be written");
     }
-    
 
-    info!("Creating worker thread pool");
-    let pool = ThreadPool::new(num_cpus::get() * 4);
-    info!("Worker thread pool created");
+    let gate = Gate::new();
+    let stats = Arc::new(Stats::default());
+    let walk_errors = Arc::new(WalkErrors::default());
 
-    let main_progress = Arc::new(ProgressHolder::new(job_queue.jobs as u64));
-    let stats = Arc::new(Mutex::new(Stats::new()));
-
-    info!("Queueing jobs");
-    for job in job_queue {
-        let main_progress = main_progress.clone();
-        let stats = stats.clone();
-        pool.execute(move || {
-            job.execute(args.conflict_resolution_strategy, main_progress, stats, args.dry_run);
-        });
-    }
-    info!("All jobs queued");
-
-    info!("Waiting for jobs to complete");
-    pool.join();
-    info!("All jobs complete");
-
-    let stats = stats.lock().unwrap();
-    
-    if pool.panic_count() > 0 {
-        main_progress.pb.lock().unwrap().abandon_with_message("Copy failed");
-        warn!("Not all jobs completed successfully");
-        println!("Failed! {} files copied, {} files skipped, {} files overwritten", stats.files, stats.files_skipped, stats.files_overwritten);
-        println!("{}", format!("Some ({}) jobs failed to execute. Please check the logs for more information. ({})", pool.panic_count(), LOG_FILE.display()).red());
+    // Only the interactive strategy needs an arbiter task owning stdin.
+    let arbiter = if args.conflict == ConflictResolutionStrategy::Ask {
+        let (tx, rx) = tokio::sync::mpsc::channel(CONFLICT_QUEUE);
+        tokio::spawn(conflict_resolver::run_arbiter(
+            rx,
+            progress.clone(),
+            gate.clone(),
+            conflict_resolver::terminal_prompt(),
+        ));
+        ConflictArbiter::interactive(tx)
     } else {
-        main_progress.pb.lock().unwrap().finish_with_message("Copy complete");
-        println!("Done! {} files copied, {} files skipped, {} files overwritten", stats.files, stats.files_skipped, stats.files_overwritten);
+        ConflictArbiter::fixed(args.conflict)
+    };
+
+    let roots = Arc::new(walker::Roots {
+        source: source.clone(),
+        target: dest.clone(),
+    });
+
+    let jobs = walker::spawn(
+        roots.clone(),
+        args.queue_depth,
+        args.discovery_jobs,
+        args.dry_run,
+        progress.clone(),
+        walk_errors.clone(),
+    );
+
+    // indicatif does not draw to a non-terminal, so emit periodic plain lines instead to keep
+    // scheduled-task logs from being blank.
+    let plain_reporter = (!progress.is_drawing()).then(|| {
+        let progress = progress.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(progress.plain_interval());
+            ticker.tick().await; // The first tick completes immediately.
+            loop {
+                ticker.tick().await;
+                println!("{}", progress.plain_line());
+            }
+        })
+    });
+
+    let completion = scheduler::run(
+        jobs,
+        Lanes::new(args.local_jobs, args.cloud_jobs),
+        arbiter,
+        progress.clone(),
+        stats.clone(),
+        gate,
+        RunConfig {
+            roots,
+            min_free: args.min_free,
+            dry_run: args.dry_run,
+        },
+    )
+    .await;
+
+    if let Some(task) = plain_reporter {
+        task.abort();
     }
-    
+    progress.finish_and_clear();
+
+    report(
+        &stats,
+        &walk_errors,
+        completion,
+        args.dry_run,
+        args.conflict,
+    )
+}
+
+fn report(
+    stats: &Stats,
+    walk: &WalkErrors,
+    completion: Completion,
+    dry_run: bool,
+    conflict: ConflictResolutionStrategy,
+) -> std::process::ExitCode {
+    // Unconditional overwrite skips the per-file existence check, so created and replaced files
+    // are not counted separately. Label the line accordingly rather than implying nothing was
+    // replaced.
+    let merged = conflict == ConflictResolutionStrategy::Overwrite;
+    let get = |v: &std::sync::atomic::AtomicU64| v.load(Ordering::Relaxed);
+
+    let headline = match completion {
+        Completion::Finished => "Done",
+        Completion::Interrupted => "Interrupted",
+        Completion::UserQuit => "Stopped at your request",
+        Completion::OutOfSpace => "Stopped: not enough free space",
+    };
+
+    let verb = match (dry_run, merged) {
+        (true, _) => "would copy",
+        (false, true) => "copied/replaced",
+        (false, false) => "copied",
+    };
+    println!("\n{headline}{}", if dry_run { " (dry run)" } else { "" });
+    println!(
+        "  {verb:>12}: {:>7} files  {:>10}",
+        get(&stats.files_copied),
+        HumanBytes(get(&stats.bytes_copied))
+    );
+    if !merged {
+        println!(
+            "  {:>12}: {:>7} files  {:>10}",
+            "overwritten",
+            get(&stats.files_overwritten),
+            HumanBytes(get(&stats.bytes_overwritten))
+        );
+    }
+    println!(
+        "  {:>12}: {:>7} files  {:>10}",
+        "skipped",
+        get(&stats.files_skipped),
+        HumanBytes(get(&stats.bytes_skipped))
+    );
+
+    let would_prompt = get(&stats.files_would_prompt);
+    if would_prompt > 0 {
+        println!(
+            "  {:>12}: {:>7} files  (you would be asked about each)",
+            "conflicts", would_prompt
+        );
+    }
+
+    let hydrated = get(&stats.files_hydrated);
+    if hydrated > 0 {
+        println!(
+            "  {:>12}: {:>7} files  {:>10}   <- downloaded from cloud storage",
+            "hydrated",
+            hydrated,
+            HumanBytes(get(&stats.bytes_hydrated))
+        );
+    }
+
+    let retries = get(&stats.retries);
+    if retries > 0 {
+        println!("  {:>12}: {retries}", "retries");
+    }
+
+    // Directory links are never descended into. Say so rather than letting an
+    // incomplete copy look complete.
+    let links = walk.links_skipped();
+    if links > 0 {
+        println!(
+            "  {:>12}: {links} directory link(s) not followed; their contents were NOT copied",
+            "links"
+        );
+    }
+
+    let failed = get(&stats.files_failed);
+    let walk_errors = walk.count();
+    let mut problems = false;
+
+    if failed > 0 {
+        problems = true;
+        eprintln!("  {:>12}: {failed} files", "FAILED");
+    }
+    if walk_errors > 0 {
+        problems = true;
+        eprintln!(
+            "  {:>12}: {walk_errors} entries could not be read",
+            "SCAN ERRORS"
+        );
+    }
+    if problems {
+        eprintln!("\nSee {} for details.", logger::LOG_FILE.display());
+    }
+
+    let clean = matches!(completion, Completion::Finished) && !problems;
+    if clean {
+        info!("Run completed cleanly");
+        std::process::ExitCode::SUCCESS
+    } else {
+        std::process::ExitCode::FAILURE
+    }
+}
+
+fn fail(message: &str) -> std::process::ExitCode {
+    error!("{message}");
+    eprintln!("error: {message}");
+    std::process::ExitCode::FAILURE
 }
