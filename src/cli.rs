@@ -105,9 +105,22 @@ impl Cli {
             (Some(src), Some(dest), None, None) | (None, None, Some(src), Some(dest)) => {
                 Ok((src.clone(), dest.clone()))
             }
-            _ => Err(
-                "Either the positional or the named arguments must be used, but not both.".into(),
-            ),
+            (a, b, c, d) => {
+                if (a.is_some() || b.is_some()) && (c.is_some() || d.is_some()) {
+                    Err(
+                        "Exactly one of either the positional or the named form must be used."
+                            .into(),
+                    )
+                } else if (a.is_some() ^ b.is_some()) || (c.is_some()^d.is_some()) {
+                    if (a.is_some() || c.is_some()) {
+                        Err("Missing required value dest".into())
+                    }else{
+                        Err("Missing required value source".into())
+                    }
+                } else {
+                    unreachable!("All cases for combinations covered.")
+                }
+            }
         }
     }
 
@@ -190,7 +203,8 @@ mod tests {
     #[test]
     fn missing_operand_errors() {
         let cli = parse(&["src"]);
-        assert!(cli.resolve_paths().unwrap_err().contains("missing dest"));
+        let err = cli.resolve_paths().unwrap_err();
+        assert!(err.contains("required value dest"), "incorrect err: {err}");
     }
 
     #[test]
