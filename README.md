@@ -1,5 +1,8 @@
 # deepcopy
 
+[![CI](https://github.com/lo9ud/deepcopy/actions/workflows/ci.yml/badge.svg)](https://github.com/lo9ud/deepcopy/actions/workflows/ci.yml)
+[![Release](https://github.com/lo9ud/deepcopy/actions/workflows/release.yml/badge.svg)](https://github.com/lo9ud/deepcopy/actions/workflows/release.yml)
+
 A directory copier that handles cloud-backed files properly.
 
 Designed specifically around limitations with moving files kept online by OneDrive.
