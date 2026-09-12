@@ -2,9 +2,8 @@
 
 /// Whether a file is an un-hydrated (online-only) cloud placeholder.
 ///
-/// `RECALL_ON_DATA_ACCESS` is the bit OneDrive Files-On-Demand sets on a placeholder and clears
-/// once the file is hydrated. 
-/// `RECALL_ON_OPEN` covers providers that hydrate on open rather than on read. 
+/// `RECALL_ON_DATA_ACCESS` is the bit OneDrive Files-On-Demand sets on a placeholder and clears once the file is hydrated.
+/// `RECALL_ON_OPEN` covers providers that hydrate on open rather than on read.
 /// `OFFLINE` is the legacy HSM/archive bit.
 ///
 /// The bit is binary, so a partially hydrated file still reports `true`.

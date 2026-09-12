@@ -205,17 +205,16 @@ fn scan_dir(dir: &Path, roots: &Roots, errors: &WalkErrors, dry_run: bool) -> Sc
         let path = entry.path();
         let file_type = metadata.file_type();
 
-        if file_type.is_symlink() {
-            if path.is_dir() {
-                errors.link_skipped();
-                warn!(
-                    "Not descending into directory link {} (its contents are NOT copied)",
-                    path.display()
-                );
-                continue;
-            }
-            // A link to a file is fine: std::fs::copy follows it and copies the contents.
+        // A directory link is not a directory, so it is not descended into.
+        if file_type.is_symlink() && path.is_dir() {
+            errors.link_skipped();
+            warn!(
+                "Not descending into directory link {} (its contents are NOT copied)",
+                path.display()
+            );
+            continue;
         }
+        // A link to a file is fine: std::fs::copy follows it and copies the contents.
 
         if file_type.is_dir() {
             scan.subdirs.push(path);

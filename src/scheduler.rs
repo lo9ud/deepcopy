@@ -224,7 +224,7 @@ pub async fn run(
         let roots = config.roots.clone();
         let dirs = dirs.clone();
 
-        // Reap finished tasks as we go. 
+        // Reap finished tasks as we go.
         while tasks.try_join_next().is_some() {}
 
         tasks.spawn(async move {
@@ -255,8 +255,8 @@ pub async fn run(
     completion
 }
 
-/// Checks both volumes. 
-/// 
+/// Checks both volumes.
+///
 /// Rehydration can fill source, so guards against source volume being filled as well.
 fn low_on_space(config: &RunConfig, progress: &Progress) -> bool {
     for (label, path) in [

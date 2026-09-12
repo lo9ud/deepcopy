@@ -106,19 +106,32 @@ impl Cli {
                 Ok((src.clone(), dest.clone()))
             }
             (a, b, c, d) => {
+                // A positional and a named arguement used simultaneously
                 if (a.is_some() || b.is_some()) && (c.is_some() || d.is_some()) {
                     Err(
                         "Exactly one of either the positional or the named form must be used."
                             .into(),
                     )
-                } else if (a.is_some() ^ b.is_some()) || (c.is_some()^d.is_some()) {
-                    if (a.is_some() || c.is_some()) {
+                // One of the two required values is missing
+                } else if (a.is_some() ^ b.is_some()) || (c.is_some() ^ d.is_some()) {
+                    // Dest is missing
+                    if a.is_some() || c.is_some() {
                         Err("Missing required value dest".into())
-                    }else{
+                    // Source is missing
+                    } else {
                         Err("Missing required value source".into())
                     }
+                // Neither of the two required values is present
+                } else if a.is_none() && b.is_none() && c.is_none() && d.is_none() {
+                    Err("Missing required values source and dest".into())
                 } else {
-                    unreachable!("All cases for combinations covered.")
+                    // Verified via truth table on:
+                    // ((X1∨X2)∧(X3∨X4))
+                    // OR
+                    // (X1⊕X2)∨(X3⊕X4)
+                    // OR
+                    // ¬(X1∨X2∨X3∨X4)
+                    unreachable!("All cases covered.")
                 }
             }
         }

@@ -185,8 +185,8 @@ pub async fn run(
     }
 }
 
-/// Retries only on transient errors. 
-/// 
+/// Retries only on transient errors.
+///
 /// There is deliberately no timeout as rehydration can take arbitrarily long under bad network conditions.
 async fn copy_with_retry(
     src: &Path,
